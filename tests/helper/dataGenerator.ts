@@ -5,6 +5,38 @@ import { StakingScriptData, stakingTransaction } from "../../src";
 import { StakingScripts } from "../../src/types/StakingScripts";
 import { UTXO } from "../../src/types/UTXO";
 
+import { Miniscript } from "@bitgo/wasm-miniscript";
+
+function decodeScriptChecked(script: Buffer) {
+  const ms = Miniscript.fromBitcoinScript(script, "tap");
+  if (!Buffer.from(ms.encode()).equals(script)) {
+    throw new Error("Decoded script does not match original script");
+  }
+  return ms.toString();
+}
+
+function decodeScriptsToMiniscript(scripts: StakingScripts) {
+  function mapValue(value: unknown): unknown {
+    if (Buffer.isBuffer(value)) {
+      try {
+        return decodeScriptChecked(value);
+      } catch (e: unknown) {
+        return { error: (e as Error).message };
+      }
+    }
+
+    return {
+      error: "Unsupported type",
+    };
+  }
+
+  const result = Object.fromEntries(Object.entries(scripts).map(([k, v]) => {
+    return [k, mapValue(v)];
+  }));
+
+  require("fs").writeFileSync("scripts.json", JSON.stringify(result, null, 2));
+}
+
 bitcoin.initEccLib(ecc);
 const ECPair = ECPairFactory(ecc);
 
@@ -173,6 +205,7 @@ class DataGenerator {
       throw new Error(error?.message || "Error while recreating scripts");
     }
 
+    decodeScriptsToMiniscript(scripts);
     return scripts;
   };
 
