@@ -5,6 +5,68 @@ import { StakingScriptData, stakingTransaction } from "../../src";
 import { StakingScripts } from "../../src/types/StakingScripts";
 import { UTXO } from "../../src/types/UTXO";
 
+import { Miniscript } from "@bitgo/wasm-miniscript";
+import { StakingScriptDataMini } from "../../src/utils/stakingScriptMini";
+
+function assertEqualScripts(a: StakingScripts, b: StakingScripts) {
+  function decodeToMs(buffer: Buffer) {
+    try {
+      return Miniscript.fromBitcoinScript(buffer, "tap").toString();
+    } catch (e: unknown) {
+      return (e as Error).message;
+    }
+  }
+  if (Object.keys(a).length !== Object.keys(b).length) {
+    throw new Error(
+      `keys length mismatch: ${Object.keys(a).length} !== ${
+        Object.keys(b).length
+      }`,
+    );
+  }
+  Object.entries(a).forEach(([key, value]: [string, Buffer]) => {
+    const bValue = b[key as keyof StakingScripts];
+    if (!bValue) {
+      throw new Error(`key ${key} not found in b`);
+    }
+    if (!value.equals(bValue)) {
+      throw new Error(
+        [
+          `values mismatch for key ${key}: `,
+          value.toString("hex"),
+          `!==`,
+          bValue.toString("hex"),
+          `\nms:\n`,
+          decodeToMs(value),
+          '\n!==\n',
+          decodeToMs(bValue),
+        ].join(""),
+      );
+    }
+  });
+}
+
+function decodeScriptsToMiniscript(scripts: StakingScripts) {
+  function mapValue(value: unknown): unknown {
+    if (Buffer.isBuffer(value)) {
+      try {
+        return Miniscript.fromBitcoinScript(value, "tap").toString();
+      } catch (e: unknown) {
+        return { error: (e as Error).message };
+      }
+    }
+
+    return {
+      error: "Unsupported type",
+    };
+  }
+
+  const result = Object.entries(scripts).map(([k, v]) => {
+    return [k, mapValue(v)];
+  });
+
+  require("fs").writeFileSync("scripts.json", JSON.stringify(result, null, 2));
+}
+
 bitcoin.initEccLib(ecc);
 const ECPair = ECPairFactory(ecc);
 
@@ -172,6 +234,22 @@ class DataGenerator {
     } catch (error: Error | any) {
       throw new Error(error?.message || "Error while recreating scripts");
     }
+
+    if (process.env.DUMP_DECODE_MINISCRIPT) {
+      decodeScriptsToMiniscript(scripts);
+    }
+
+    const mini = new StakingScriptDataMini(
+      Buffer.from(publicKeyNoCoord, "hex"),
+      [Buffer.from(finalityProviderPk, "hex")],
+      covenantPKsBuffer,
+      globalParams.covenantQuorum,
+      stakingTxTimelock,
+      globalParams.unbondingTime,
+      Buffer.from(globalParams.tag, "hex"),
+    ).buildScripts();
+
+    assertEqualScripts(scripts, mini);
 
     return scripts;
   };
